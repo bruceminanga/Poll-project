@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-db # Stable DNS name for other pods to connect to
+spec:
+  ports:
+    - port: 5432 # Port the service listens on
+      targetPort: 5432 # Port on the pod to forward traffic to
+  selector:
+    app: postgres # Selects Pods with the label 'app: postgres'
+  clusterIP: None # IMPORTANT: Creates a "headless" service
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres # Name of the StatefulSet resource
+spec:
+  serviceName: "postgres-db" # Must match the headless Service name above
+  replicas: 1 # Start with a single database instance
+  selector:
+    matchLabels: # How the StatefulSet finds its Pods
+      app: postgres
+  template: # Blueprint for the Pods
+    metadata:
+      labels:
+        app: postgres # Label the Pods
+    spec:
+      terminationGracePeriodSeconds: 10 # Time for graceful shutdown
+      containers:
+        - name: postgres
+          image: postgres:13-alpine # Same image as docker-compose
+          ports:
+            - containerPort: 5432
+              name: postgresql # Named port
+          env: # Environment variables for the container
+            - name: POSTGRES_DB
+              value: "polls_prod_db" # Database name for production
+            - name: POSTGRES_USER
+              value: "polls_prod_user" # Database user for production
+            - name: POSTGRES_PASSWORD # Get password from the Secret
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret # Name of the Secret object
+                  key: POSTGRES_PASSWORD # Key within the Secret data
+            - name: PGDATA # Tell PostgreSQL where to store its data within the volume
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts: # Mount the persistent volume into the container
+            - name: postgres-storage # Name matching volumeClaimTemplates below
+              mountPath: /var/lib/postgresql/data # Mount point inside container
+          # --- Health Checks ---
+          livenessProbe: # Is the container process still running correctly?
+            exec:
+              # Command to execute inside the container
+              command:
+                ["pg_isready", "-U", "polls_prod_user", "-d", "polls_prod_db"]
+            initialDelaySeconds: 30 # Wait 30s before first probe
+            timeoutSeconds: 5 # Max time for probe to succeed
+            periodSeconds: 10 # How often to probe
+            failureThreshold: 3 # How many failures before marking unhealthy
+          readinessProbe: # Is the container ready to accept connections?
+            exec:
+              command:
+                ["pg_isready", "-U", "polls_prod_user", "-d", "polls_prod_db"]
+            initialDelaySeconds: 5 # Wait 5s before first probe
+            timeoutSeconds: 3
+            periodSeconds: 5 # Probe more frequently for readiness
+            failureThreshold: 3
+  # --- Persistent Volume Claim Template ---
+  volumeClaimTemplates: # Defines how to automatically create PVCs for each Pod
+    - metadata:
+        name: postgres-storage # Name for the volume mount in the Pod spec
+      spec:
+        accessModes: ["ReadWriteOnce"] # Volume can be mounted RW by a single node
+        resources:
+          requests:
+            storage: 2Gi # Request 2 Gigabytes of storage
+        # storageClassName: standard # May be needed depending on cluster setup (e.g., 'standard' on GKE/AKS, 'gp2' on EKS). Minikube/Kind often have a default.
