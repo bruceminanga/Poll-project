@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cache # Stable DNS name for Django/Celery to connect to
+spec:
+  ports:
+    - port: 6379 # Service port
+      targetPort: 6379 # Container port (default Redis port)
+  selector:
+    app: redis # Selects Pods labeled 'app: redis'
+  # Default type is ClusterIP, which is what we want (internal only)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis # Name of the Deployment resource
+spec:
+  replicas: 1 # Start with one Redis instance
+  selector:
+    matchLabels: # How the Deployment finds its Pods
+      app: redis
+  template: # Blueprint for the Pods
+    metadata:
+      labels:
+        app: redis # Label the Pods
+    spec:
+      containers:
+        - name: redis
+          image: redis:6-alpine # Official Redis image
+          ports:
+            - containerPort: 6379
+          volumeMounts: # Mount the persistent volume
+            - name: redis-data # Name matching the 'volumes' section below
+              mountPath: /data # Standard path where Redis stores data
+          # --- Health Checks ---
+          readinessProbe: # Is Redis ready to accept connections?
+            tcpSocket: # Simple check: can we open a TCP connection?
+              port: 6379
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe: # Is the Redis process still running?
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes: # Define the volumes available to the Pod
+        - name: redis-data # Arbitrary name used in volumeMounts
+          persistentVolumeClaim: # Source the volume from a PVC
+            claimName: redis-pvc # Name of the PVC we created earlier
