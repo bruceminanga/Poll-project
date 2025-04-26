@@ -1,0 +1,7 @@
+Django
+psycopg2-binary # PostgreSQL adapter
+celery
+redis # Redis client for Celery broker/backend
+gunicorn # Production WSGI server
+whitenoise # For serving static files
+python-dotenv # To load .env file locally (optional but helpful)

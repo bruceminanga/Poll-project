@@ -1,0 +1,79 @@
+services:
+  # PostgreSQL Database Service
+  db:
+    image: postgres:13-alpine # Use official PostgreSQL image
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/ # Persist data using a named volume
+    environment:
+      # These values MUST match the defaults or .env file used by Django/Celery
+      - POSTGRES_DB=polls_db
+      - POSTGRES_USER=polls_user
+      - POSTGRES_PASSWORD=polls_password # Insecure for K8s, ok for local
+    ports:
+      - "5432:5432" # Expose port locally ONLY for potential debugging with DB tool
+
+  # Redis Service
+  redis:
+    image: redis:6-alpine # Use official Redis image
+    volumes:
+      - redis_data:/data # Persist Redis data
+    ports:
+      - "6379:6379" # Expose port locally ONLY for debugging
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Remove this command line to use the entrypoint.sh from Dockerfile
+    # command: sh -c "python manage.py migrate --noinput && gunicorn poll_project.wsgi:application --bind 0.0.0.0:8000"
+    volumes:
+      # For development only - consider removing in production
+      - ./:/app # Mount as read-only to prevent unexpected modifications
+      # Mount specific directories to persist data without affecting build caching
+      - static_volume:/app/static
+      - media_volume:/app/media
+    ports:
+      - "8000:8000"
+    environment:
+      # Environment variables remain the same
+      - DJANGO_SETTINGS_MODULE=poll_project.settings
+      - SECRET_KEY=${SECRET_KEY}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=db
+      - DB_PORT=${DB_PORT}
+      - REDIS_URL=${REDIS_URL}
+      - DEBUG=True
+    depends_on:
+      - db
+      - redis
+
+  # Celery Worker Service
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile # Reuse the same image built for 'web'
+    # Override the CMD from the Dockerfile to start the celery worker
+    command: celery -A poll_project worker --loglevel=info
+    volumes:
+      - .:/app # Mount code for live reloading (DEV ONLY)
+    environment:
+      # Worker needs the same environment variables as the web app
+      - DJANGO_SETTINGS_MODULE=poll_project.settings
+      - SECRET_KEY=${SECRET_KEY}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=db
+      - DB_PORT=${DB_PORT}
+      - REDIS_URL=${REDIS_URL}
+    depends_on:
+      - redis # Must wait for Redis (broker)
+      - db # May need DB access depending on tasks
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_volume: # For Django static files
+  media_volume: # For user-uploaded content
